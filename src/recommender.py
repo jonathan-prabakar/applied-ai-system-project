@@ -11,6 +11,16 @@ W_ENERGY = 2.0
 W_DANCEABILITY = 1.5  # rewards songs whose groove matches the user's taste
 W_ACOUSTIC = 1.0
 
+# Default weight bundle. The agentic workflow (src/agent.py) hands a *copy* of
+# this to the scorer and mutates it between iterations to "fix" bad results.
+DEFAULT_WEIGHTS: Dict[str, float] = {
+    "genre": W_GENRE,
+    "mood": W_MOOD,
+    "energy": W_ENERGY,
+    "danceability": W_DANCEABILITY,
+    "acoustic": W_ACOUSTIC,
+}
+
 
 @dataclass
 class Song:
@@ -131,21 +141,57 @@ def load_songs(csv_path: str) -> List[Dict]:
     return songs
 
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
+def recommend_songs(
+    user_prefs: Dict,
+    songs: List[Dict],
+    k: int = 5,
+    weights: Optional[Dict[str, float]] = None,
+    diversity_penalty: float = 0.0,
+) -> List[Tuple[Dict, float, str]]:
     """
     Functional implementation of the recommendation logic.
     Required by src/main.py
 
     Returns a list of (song_dict, score, explanation) sorted by score.
+
+    Extra knobs used by the agentic workflow (src/agent.py):
+      - weights:           override the scoring weights (see DEFAULT_WEIGHTS).
+      - diversity_penalty: subtract this many points from a song for each
+                           already-selected song that shares its genre. Lets
+                           the agent "fix" an all-one-genre result set by
+                           re-running with a non-zero penalty.
     """
-    # Score every song, then sort highest-first and keep the top k.
-    scored = [_score_song_dict(user_prefs, song) for song in songs]
-    scored.sort(key=lambda item: item[1], reverse=True)
-    return scored[:k]
+    weights = weights or DEFAULT_WEIGHTS
+    scored = [_score_song_dict(user_prefs, song, weights) for song in songs]
+
+    if diversity_penalty <= 0.0:
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:k]
+
+    # Greedy diversity-aware selection: repeatedly pick the best song after
+    # penalising genres already in the shortlist.
+    remaining = list(scored)
+    picked: List[Tuple[Dict, float, str]] = []
+    genre_counts: Dict[str, int] = {}
+    while remaining and len(picked) < k:
+        def adjusted(item: Tuple[Dict, float, str]) -> float:
+            song, base, _ = item
+            return base - diversity_penalty * genre_counts.get(song["genre"], 0)
+
+        best = max(remaining, key=adjusted)
+        remaining.remove(best)
+        picked.append(best)
+        genre_counts[best[0]["genre"]] = genre_counts.get(best[0]["genre"], 0) + 1
+    return picked
 
 
-def _score_song_dict(user_prefs: Dict, song: Dict) -> Tuple[Dict, float, str]:
+def _score_song_dict(
+    user_prefs: Dict,
+    song: Dict,
+    weights: Optional[Dict[str, float]] = None,
+) -> Tuple[Dict, float, str]:
     """Score one song dict; mirrors score_song() for the functional API."""
+    w = weights or DEFAULT_WEIGHTS
     target_energy = user_prefs.get("energy", 0.5)
     target_dance = user_prefs.get("danceability", 0.5)
     likes_acoustic = user_prefs.get("likes_acoustic", False)
@@ -153,22 +199,22 @@ def _score_song_dict(user_prefs: Dict, song: Dict) -> Tuple[Dict, float, str]:
     score = 0.0
     reasons: List[str] = []
     if song["genre"] == user_prefs.get("genre"):
-        score += W_GENRE
-        reasons.append(f"genre match ({song['genre']}) (+{W_GENRE:.1f})")
+        score += w["genre"]
+        reasons.append(f"genre match ({song['genre']}) (+{w['genre']:.1f})")
     if song["mood"] == user_prefs.get("mood"):
-        score += W_MOOD
-        reasons.append(f"mood match ({song['mood']}) (+{W_MOOD:.1f})")
+        score += w["mood"]
+        reasons.append(f"mood match ({song['mood']}) (+{w['mood']:.1f})")
 
-    energy_pts = W_ENERGY * _closeness(song["energy"], target_energy)
+    energy_pts = w["energy"] * _closeness(song["energy"], target_energy)
     score += energy_pts
     reasons.append(f"energy close (+{energy_pts:.2f})")
 
-    dance_pts = W_DANCEABILITY * _closeness(song["danceability"], target_dance)
+    dance_pts = w["danceability"] * _closeness(song["danceability"], target_dance)
     score += dance_pts
     reasons.append(f"danceability close (+{dance_pts:.2f})")
 
     if (song["acousticness"] > 0.6) == likes_acoustic:
-        score += W_ACOUSTIC
-        reasons.append(f"acoustic preference match (+{W_ACOUSTIC:.1f})")
+        score += w["acoustic"]
+        reasons.append(f"acoustic preference match (+{w['acoustic']:.1f})")
 
     return song, score, ", ".join(reasons)

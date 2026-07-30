@@ -1,0 +1,20 @@
+flowchart TD
+    User([User taste profile]) --> Main[src/main.py<br/>CLI runner]
+    CSV[(data/songs.csv)] --> Load[load_songs]
+    Load --> Main
+    Main --> Agent[AgenticRecommender.run<br/>src/agent.py]
+
+    subgraph Loop [Agentic workflow: plan - act - check - fix]
+        direction TB
+        Plan[PLAN<br/>sanitise input, clamp<br/>out-of-range values,<br/>pick starting strategy] --> Act
+        Act[ACT<br/>recommend_songs with<br/>current weights +<br/>diversity penalty] --> Check
+        Check{CHECK<br/>relevance? diversity?<br/>valid output?}
+        Check -- issues found --> Fix[FIX<br/>adjust weights /<br/>raise diversity penalty]
+        Fix --> Act
+        Check -- passes OR iteration cap --> Done[Return recommendations<br/>+ trace + warnings]
+    end
+
+    Agent --> Plan
+    Act -.calls.-> Rec[recommender.py<br/>score_song / recommend_songs]
+    Done --> Output[Ranked songs, reasons,<br/>agent trace, guardrail notes]
+    Loop -.logs each step.-> Log[[logging: music_agent]]
