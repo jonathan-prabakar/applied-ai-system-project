@@ -104,6 +104,55 @@ out-of-range clamping, empty-input handling, and conflict detection — currentl
 
 ---
 
+## Web Deployment (Vercel)
+
+The project also ships a **FastAPI web layer** ([api/index.py](api/index.py)) that
+wraps the same recommender in a browser UI. The CLI still works exactly as
+described above — the web app is an additional demo surface.
+
+### Run the web app locally
+
+```bash
+pip install -r requirements.txt
+uvicorn api.index:app --reload
+# open http://localhost:8000
+```
+
+### Deploy to Vercel
+
+**Option A — Vercel CLI:**
+
+```bash
+npm i -g vercel
+vercel login
+vercel            # from the project root; answer the prompts
+vercel --prod     # deploy to production
+```
+
+**Option B — Vercel Dashboard (no CLI):**
+
+1. Push this repo to GitHub.
+2. Go to [vercel.com](https://vercel.com) → **Add New Project** → **Import** your repo.
+3. Framework Preset: **Other** (the `vercel.json` in this repo handles the rest).
+4. Click **Deploy**.
+
+### What you get
+
+- `GET /` — the IntelliTunes web UI (pick genre/mood/energy, see recommendations)
+- `POST /recommend` — JSON API for the agentic recommender
+- `GET /catalog` — available genres/moods (used by the UI dropdowns)
+- `GET /health` — health check
+
+Example API call:
+
+```bash
+curl -X POST https://YOUR-APP.vercel.app/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"genre": "lofi", "mood": "chill", "energy": 0.4, "k": 5}'
+```
+
+---
+
 ## Sample Interactions
 
 Three real runs against `data/songs.csv` (17 songs). Traces are copied verbatim
